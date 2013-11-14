@@ -8,9 +8,10 @@ use common::sense 3;m{
 use Scalar::Util 'weaken';
 use Carp;
 use DBI;
-use DBD::Pg ':async';
+use DBD::Pg ':async', 'PG_BYTEA';
 use AE 5;
 use Time::HiRes 'time';
+{ package AnyEvent::DBD::Pg::BYTEA; };
 
 =head1 NAME
 
@@ -18,7 +19,7 @@ AnyEvent::DBD::Pg - AnyEvent interface to DBD::Pg's async interface
 
 =cut
 
-our $VERSION = '0.03_05'; $VERSION = eval($VERSION);
+our $VERSION = '0.03_06'; $VERSION = eval($VERSION);
 
 =head1 SYNOPSIS
 
@@ -119,6 +120,10 @@ sub _set_ka_timer {
 	$self->{ka} = AE::timer 30,30, sub {
 		
 	};
+}
+
+sub bytea{
+    @_ == 1 ? ( bless \$_[0], "AnyEvent::DBD::Pg::BYTEA" ) : bless \$_[1], "AnyEvent::DBD::Pg::BYTEA";
 }
 
 sub connect {
@@ -349,17 +354,28 @@ sub  AUTOLOAD {
 	use Time::HiRes 'time';
 	#warn time()." call query $query";
 	undef $@;
-	$st = eval { $self->{db}->prepare($query,$args) } # this could die with 'server closed the connection unexpectedly'
-		and $st->execute(@_) 
-		or return do{
-			undef $st;
-			@watchers = ();
-			my $err = defined $@ && $@ ? "$@" : $self->{db}->errstr;
-			warn "prepare/execute failed: $@/".$self->{db}->errstr. " = $err ";
-			callcb($cb, $err);
-			
-			$self->_dequeue;
-		};
+	$st = eval { $self->{db}->prepare($query,$args) }; # this could die with 'server closed the connection unexpectedly'
+	my $return_err_cb = sub {
+	    undef $st;
+	    @watchers = ();
+	    my $err = defined $@ && $@ ? "$@" : $self->{db}->errstr;
+	    warn "prepare/execute failed: $@/" . $self->{db}->errstr . " = $err ";
+	    callcb( $cb, $err );
+
+	    $self->_dequeue;
+	};
+	if ( $st ){
+	    for my $i ( 0..$#_ ){
+                if ( UNIVERSAL::isa($_[ $i ], 'AnyEvent::DBD::Pg::BYTEA' )){
+                    splice @_, $i, 1, ${$_[$i]};
+                    $st->bind_param( $i + 1, undef, { pg_type => PG_BYTEA } );
+                }
+            };
+            $st->execute( @_ ) or return $return_err_cb->();
+	}
+	else {
+	    return $return_err_cb->();
+	}
 	#warn time()." call query $query done";
 	# At all we don't need timers for the work, but if we have some bugs, it will help us to find them
 	push @watchers, AE::timer 1,1, $watchers[0];
