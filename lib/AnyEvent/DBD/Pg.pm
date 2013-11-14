@@ -59,6 +59,14 @@ our $VERSION = '0.03_06'; $VERSION = eval($VERSION);
 		warn "Got $adb->{qd} = @_";
 	});
 	
+	$adb->execute("insert into table_with_bytea(col) values (?::bytea)",
+		{}, 
+		$adb->bytea( $binary_data ),
+		sub {
+		shift or return warn;
+		say STDERR "insert was successfull";
+	});
+
 	$adb->selectrow_array("select pg_sleep( 0.1 ), 2", {}, sub {
 		shift or return warn;
 		warn "Got $adb->{qd} = [@_]";
@@ -419,6 +427,10 @@ Execute PG_ASYNC prepare, than push result of C<fetchall_hashref($args{Columns})
 =item execute( $query, [\%args], $cb->( $rc, $sth ))
 
 Execute PG_ASYNC prepare, than invoke callback, pushing resulting sth to it.
+
+=item bytea( $binary_data )
+
+Bless binary data into form usefull for passing into Postgres
 
 B<Please, note>: result already passed as first argument
 
